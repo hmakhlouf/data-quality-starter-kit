@@ -18,7 +18,7 @@ jobs:
       # In a real pipeline add --fail-on-critical to block the merge or the load.
       - run: python dq/run_checks.py
       - run: cat output/report.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: data-quality-report
           path: |
