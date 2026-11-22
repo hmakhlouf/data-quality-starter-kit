@@ -1,0 +1,26 @@
+name: data-quality-demo
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  run-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python demo/generate_data.py
+      # The demo data has planted problems, so this run is expected to report failures.
+      # In a real pipeline add --fail-on-critical to block the merge or the load.
+      - run: python dq/run_checks.py
+      - run: cat output/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-quality-report
+          path: |
+            output/report.md
+            output/issue_log.csv

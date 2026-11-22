@@ -1,0 +1,65 @@
+# dbt version of the same rules (dbt 1.8+).
+# Packages (packages.yml):
+#   - package: metaplane/dbt_expectations      # 60+ Great-Expectations-style tests in SQL
+#   - package: dbt-labs/audit_helper           # compare two relations (staging vs target)
+#   - package: elementary-data/elementary      # results history, anomaly monitors, Slack alerts
+#
+# Run: dbt build          (tests run after each model; a failing `error` test stops downstream models)
+
+version: 2
+
+models:
+  - name: stg_program_records
+    columns:
+      - name: record_id
+        data_tests: [not_null, unique]
+      - name: program_id
+        data_tests:
+          - not_null:
+              config: {severity: error}
+          - relationships:
+              to: ref('dim_program')
+              field: program_id
+      - name: category
+        data_tests:
+          - not_null:                        # NULL here = a value the mapping didn't cover
+              config: {severity: error}
+      - name: status
+        data_tests:
+          - accepted_values:
+              values: ['open', 'closed', 'pending']
+              config: {severity: warn}
+      - name: amount
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+              config: {severity: warn}
+
+  - name: tgt_program_records
+    config:
+      contract: {enforced: true}             # column names and types are guaranteed
+    data_tests:
+      # Row count within 5% of staging (simple reconciliation)
+      - dbt_expectations.expect_table_row_count_to_equal_other_table:
+          compare_model: ref('stg_program_records')
+      # Elementary: learns normal volume and alerts on anomalies
+      - elementary.volume_anomalies:
+          timestamp_column: start_date
+      - elementary.freshness_anomalies:
+          timestamp_column: start_date
+    columns:
+      - name: record_id
+        data_type: varchar
+        data_tests: [not_null, unique]
+      - name: program_id
+        data_type: varchar
+      - name: category
+        data_type: varchar
+      - name: status
+        data_type: varchar
+      - name: start_date
+        data_type: date
+      - name: amount
+        data_type: decimal(12,2)
+      - name: batch_id
+        data_type: varchar

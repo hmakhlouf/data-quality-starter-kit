@@ -1,0 +1,172 @@
+# Data quality rules: config, not code.
+# Each rule is a SQL query that returns the FAILING rows (empty result = pass).
+# Return a column named `example` with a key or short value so the issue log can show examples.
+#
+# severity:  critical = stop the batch     warn = load, log and alert
+# owner:     who usually fixes it: program team (data entry) / tech team (ETL) / source system
+#
+# Add a rule: copy a block, change the SQL, run `python dq/run_checks.py`. That's it.
+
+rules:
+  # ---------- Gate 1: raw -> staging (arrival and conversion) ----------
+  - id: RAW_001
+    name: Every record has a record_id
+    dimension: completeness
+    stage: raw
+    severity: critical
+    owner: source system
+    sql: |
+      SELECT '(row ' || CAST(rowid AS VARCHAR) || ')' AS example
+      FROM raw_program_records WHERE record_id IS NULL OR TRIM(record_id) = ''
+
+  - id: RAW_002
+    name: start_date text converts to a real date
+    dimension: validity
+    stage: raw -> staging
+    severity: warn
+    owner: program team (data entry)
+    sql: |
+      SELECT record_id || ' = "' || start_date || '"' AS example
+      FROM raw_program_records
+      WHERE start_date IS NOT NULL AND TRY_STRPTIME(start_date, '%m/%d/%Y') IS NULL
+
+  - id: RAW_003
+    name: amount text converts to a number
+    dimension: validity
+    stage: raw -> staging
+    severity: warn
+    owner: program team (data entry)
+    sql: |
+      SELECT record_id || ' = "' || amount || '"' AS example
+      FROM raw_program_records
+      WHERE TRY_CAST(REPLACE(REPLACE(amount, '$', ''), ',', '') AS DECIMAL(12,2)) IS NULL
+
+  - id: MAP_001
+    name: Every category value has a mapping
+    dimension: consistency
+    stage: raw -> staging
+    severity: critical
+    owner: tech team (ETL mapping)
+    sql: |
+      SELECT '"' || r.category || '" x' || CAST(COUNT(*) AS VARCHAR) AS example
+      FROM raw_program_records r
+      LEFT JOIN map_category m ON m.source_value = UPPER(r.category)   -- same join as the pipeline
+      WHERE m.target_value IS NULL
+      GROUP BY r.category
+
+  # ---------- Gate 2: staging (typed data) ----------
+  - id: STG_001
+    name: program_id is filled
+    dimension: completeness
+    stage: staging
+    severity: critical
+    owner: program team (data entry)
+    sql: |
+      SELECT record_id AS example FROM stg_program_records WHERE program_id IS NULL
+
+  - id: STG_002
+    name: program_id exists in the program list (no orphans)
+    dimension: integrity
+    stage: staging
+    severity: critical
+    owner: program team (data entry)
+    sql: |
+      SELECT s.record_id || ' -> ' || s.program_id AS example
+      FROM stg_program_records s
+      LEFT JOIN dim_program d ON d.program_id = s.program_id
+      WHERE s.program_id IS NOT NULL AND d.program_id IS NULL
+
+  - id: STG_003
+    name: status is an allowed value
+    dimension: validity
+    stage: staging
+    severity: warn
+    owner: program team (data entry)
+    sql: |
+      SELECT record_id || ' = ' || COALESCE(status, 'NULL') AS example
+      FROM stg_program_records
+      WHERE status IS NULL OR status NOT IN ('open', 'closed', 'pending')
+
+  - id: STG_004
+    name: amount is not negative
+    dimension: validity
+    stage: staging
+    severity: warn
+    owner: program team (data entry)
+    sql: |
+      SELECT record_id || ' = ' || CAST(amount AS VARCHAR) AS example
+      FROM stg_program_records WHERE amount < 0
+
+  # ---------- Gate 3: staging -> target (reconciliation) ----------
+  - id: REC_001
+    name: Record count matches between staging and target
+    dimension: completeness
+    stage: staging -> target
+    severity: critical
+    owner: tech team (ETL)
+    sql: |
+      SELECT 'staging=' || CAST(s.n AS VARCHAR) || ' target=' || CAST(t.n AS VARCHAR) AS example
+      FROM (SELECT COUNT(*) n FROM stg_program_records) s,
+           (SELECT COUNT(*) n FROM tgt_program_records) t
+      WHERE s.n <> t.n
+
+  - id: REC_002
+    name: No records lost between staging and target
+    dimension: completeness
+    stage: staging -> target
+    severity: critical
+    owner: tech team (ETL)
+    sql: |
+      SELECT s.record_id AS example
+      FROM stg_program_records s
+      LEFT JOIN tgt_program_records t ON t.record_id = s.record_id
+      WHERE t.record_id IS NULL
+
+  - id: TGT_001
+    name: record_id is unique in target
+    dimension: uniqueness
+    stage: target
+    severity: critical
+    owner: tech team (ETL)
+    sql: |
+      SELECT record_id || ' x' || CAST(COUNT(*) AS VARCHAR) AS example
+      FROM tgt_program_records GROUP BY record_id HAVING COUNT(*) > 1
+
+  - id: REC_003
+    name: Field values match between staging and target (row hash)
+    dimension: accuracy
+    stage: staging -> target
+    severity: critical
+    owner: tech team (ETL)
+    sql: |
+      WITH s AS (SELECT DISTINCT record_id, md5(concat_ws('|', program_id, category, status, start_date, amount)) h FROM stg_program_records),
+           t AS (SELECT DISTINCT record_id, md5(concat_ws('|', program_id, category, status, start_date, amount)) h FROM tgt_program_records)
+      SELECT s.record_id AS example FROM s JOIN t USING (record_id) WHERE s.h <> t.h
+
+  - id: REC_004
+    name: Totals by program match between staging and target
+    dimension: accuracy
+    stage: staging -> target
+    severity: critical
+    owner: tech team (ETL)
+    sql: |
+      WITH s AS (SELECT program_id, COUNT(*) n, SUM(amount) total FROM stg_program_records WHERE start_date IS NOT NULL GROUP BY 1),
+           t AS (SELECT program_id, COUNT(*) n, SUM(amount) total FROM tgt_program_records GROUP BY 1)
+      SELECT COALESCE(s.program_id, t.program_id, 'NULL') || ': staging ' || CAST(s.total AS VARCHAR) || ' vs target ' || CAST(t.total AS VARCHAR) AS example
+      FROM s FULL OUTER JOIN t ON s.program_id IS NOT DISTINCT FROM t.program_id
+      WHERE s.n IS DISTINCT FROM t.n OR s.total IS DISTINCT FROM t.total
+
+  - id: TGT_002
+    name: Row count within 5% of the last run
+    dimension: completeness
+    stage: target
+    severity: warn
+    owner: tech team (ETL)
+    sql: |
+      WITH cur AS (SELECT COUNT(*) n FROM tgt_program_records),
+           prev AS (SELECT row_count n FROM dq_volume_history
+                    WHERE table_name = 'tgt_program_records' ORDER BY run_ts DESC LIMIT 1)
+      SELECT 'now ' || CAST(cur.n AS VARCHAR) || ', last run ' || CAST(prev.n AS VARCHAR)
+             || ' (' || CAST(ROUND(100.0 * (cur.n - prev.n) / prev.n, 1) AS VARCHAR) || '%)' AS example
+      FROM cur, prev
+      WHERE ABS(cur.n - prev.n) * 1.0 / NULLIF(prev.n, 0) > 0.05

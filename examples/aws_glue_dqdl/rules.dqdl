@@ -1,0 +1,17 @@
+# AWS Glue Data Quality (DQDL) version of the rules.
+# Use in a Glue ETL job (EvaluateDataQuality transform) or as a ruleset on a Glue Data Catalog table.
+# "reference" is the staging dataset passed as an additional data source.
+# Results go to CloudWatch and EventBridge: route failures to SNS (email/Slack).
+
+Rules = [
+    RowCount > 0,
+    IsComplete "record_id",
+    IsUnique "record_id",
+    IsComplete "program_id",
+    IsComplete "category",
+    ColumnValues "status" in ["open", "closed", "pending"],
+    ColumnValues "amount" >= 0,
+    ReferentialIntegrity "program_id" "dim_program.program_id" = 1.0,
+    RowCountMatch "reference" = 1.0,
+    DatasetMatch "reference" "record_id" = 1.0
+]
