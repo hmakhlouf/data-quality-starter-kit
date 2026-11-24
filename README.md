@@ -132,11 +132,9 @@ output/          report.md, issue_log.csv, demo.duckdb (generated)
 
 ## About
 
-Built by **[Tassili Technology](https://tassilitechnology.com)**, a data engineering consultancy: data pipelines that run fast, cost less and can be trusted.
+Built by [Hocine Makhlouf](https://www.linkedin.com/in/hmakhlouf/), Data Engineer based in Mannheim, Germany.
 
-This kit is based on a data quality framework our team ran in production for over a year: hundreds of automated SQL tests between raw, staging and golden tables, record counts held within ±5% of the last run, and failed batches stopped before anything reached downstream systems.
-
-Need this set up on your own pipeline? Start with a free 30-minute data review at [tassilitechnology.com](https://tassilitechnology.com).
+This kit is based on the data quality approach I used in production: automated SQL checks between raw, staging and golden tables, record counts held within ±5% of the last run, and failed batches stopped before anything reached downstream systems.
 
 ## License
 
