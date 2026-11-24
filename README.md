@@ -132,7 +132,7 @@ output/          report.md, issue_log.csv, demo.duckdb (generated)
 
 ## About
 
-Built by [Hocine Makhlouf](https://www.linkedin.com/in/hmakhlouf/), Data Engineer based in Mannheim, Germany.
+Built by [Hocine Makhlouf](https://www.linkedin.com/in/hmakhlouf/), Data Engineer.
 
 This kit is based on the data quality approach I used in production: automated SQL checks between raw, staging and golden tables, record counts held within ±5% of the last run, and failed batches stopped before anything reached downstream systems.
 
